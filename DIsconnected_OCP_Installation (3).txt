@@ -1,0 +1,984 @@
+2. Creating local yum repolist:
+> cd /etc/yum.repos.d/
+> cat yum-redhat.repo
+============
+[AppStream]
+name=Sofetware_from_Application
+baseurl=file:///mnt/AppStream
+gpgcheck=0
+enabled=1
+
+[BaseOS]
+name=Software_from_OS
+baseurl=file:///mnt/BaseOS
+gpgcheck=0
+enabled=1
+=============
+> yum repolist all
+=============
+Updating Subscription Management repositories.
+Unable to read consumer identity
+
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+
+repo id                                       repo name                                                       status
+AppStream                                     Sofetware_from_Application                                      enabled
+BaseOS                                        Software_from_OS                                                enabled
+=============
+> Check that yum is working:
+=============
+yum install podman -y
+
+---
+Updating Subscription Management repositories.
+Unable to read consumer identity
+
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+
+Sofetware_from_Application                                                            40 MB/s | 7.8 MB     00:00
+Software_from_OS                                                                      29 MB/s | 2.4 MB     00:00
+Last metadata expiration check: 0:00:01 ago on Saturday 29 April 2023 09:31:30 AM IST.
+Package podman-3:4.2.0-1.module+el8.7.0+16772+33343656.x86_64 is already installed.
+Dependencies resolved.
+Nothing to do.
+Complete!
+---
+==============
+
+3. Create the DNS record:
+> vim /etc/named.conf
+===============
+options {
+        listen-on port 53 { 127.0.0.1; 192.168.31.93; 10.10.0.21; };
+        listen-on-v6 port 53 { ::1; };
+        directory       "/var/named";
+        dump-file       "/var/named/data/cache_dump.db";
+        statistics-file "/var/named/data/named_stats.txt";
+        memstatistics-file "/var/named/data/named_mem_stats.txt";
+        secroots-file   "/var/named/data/named.secroots";
+        recursing-file  "/var/named/data/named.recursing";
+        allow-query     { localhost; 192.168.0.0/16; 10.10.0.0/24; any; };
+
+zone "vs.dr.com" IN {
+        type master;
+        file "forward.zone";
+        allow-update { none; };
+};
+
+zone "0.10.10.in-addr.arpa" IN {
+        type master;
+        file "reverse.zone";
+        allow-update { none; };
+};
+==================
+> cat /var/named/forward.zone
+==================
+$TTL 1W
+@       IN      SOA     bastion.vs.dr.com.    root.vs.dr.com. (
+                        0               ; serial
+                        3H              ; refresh (3 hours)
+                        30M             ; retry (30 minutes)
+                        2W              ; expiry (2 weeks)
+                        1W )            ; minimum (1 week)
+        IN      NS      bastion.vs.dr.com.
+
+
+bastion         IN      A       10.10.0.10
+
+api             IN      A       10.10.0.10
+api-int         IN      A       10.10.0.10
+
+*.apps          IN      A       10.10.0.10
+
+bootstrap       IN      A       10.10.0.11
+
+master1         IN      A       10.10.0.12
+master2         IN      A       10.10.0.13
+master3         IN      A       10.10.0.14
+
+worker1         IN      A       10.10.0.15
+worker2         IN      A       10.10.0.16
+===================
+> cat /var/named/reverse.zone
+===================
+$TTL 1W
+@       IN      SOA     bastion.vs.dr.com.    root.vs.dr.com. (
+                        0               ; serial
+                        3H              ; refresh (3 hours)
+                        30M             ; retry (30 minutes)
+                        2W              ; expiry (2 weeks)
+                        1W )            ; minimum (1 week)
+        IN      NS      bastion.vs.dr.com.
+10      IN      PTR     bastion.vs.dr.com.
+
+10      IN      PTR     api.vs.dr.com.
+10      IN      PTR     api-int.vs.dr.com.
+
+11      IN      PTR     bootstrap.vs.dr.com.
+
+12      IN      PTR     master1.vs.dr.com.
+13      IN      PTR     master2.vs.dr.com.
+14      IN      PTR     master3.vs.dr.com.
+
+15      IN      PTR     worker1.vs.dr.com.
+16      IN      PTR     worker2.vs.dr.com.
+=========================
+> chown root:named /var/named/forward.zone
+> chown root:named /var/named/reverse.zone
+> named-checkconf -z /etc/named.conf
+
+zone vs.dr.com/IN: loaded serial 0
+zone 0.10.10.in-addr.arpa/IN: loaded serial 0
+zone localhost.localdomain/IN: loaded serial 0
+zone localhost/IN: loaded serial 0
+zone 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa/IN: loaded serial 0
+zone 1.0.0.127.in-addr.arpa/IN: loaded serial 0
+zone 0.in-addr.arpa/IN: loaded serial 0
+
+> systemctl start named
+> systemctl enable named
+Created symlink /etc/systemd/system/multi-user.target.wants/named.service → /usr/lib/systemd/system/named.service.
+
+>  systemctl status named
+==========================
+● named.service - Berkeley Internet Name Domain (DNS)
+   Loaded: loaded (/usr/lib/systemd/system/named.service; enabled; vendor preset: disabled)
+   Active: active (running) since Sat 2023-04-29 09:47:52 IST; 9s ago
+ Main PID: 39111 (named)
+    Tasks: 9 (limit: 204117)
+   Memory: 39.3M
+   CGroup: /system.slice/named.service
+           └─39111 /usr/sbin/named -u named -c /etc/named.conf
+
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './DNSKEY/IN': 2001:500:a8::e#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './NS/IN': 2001:500:a8::e#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './DNSKEY/IN': 2001:503:c27::2:30#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './NS/IN': 2001:503:c27::2:30#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './DNSKEY/IN': 2001:500:2f::f#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './NS/IN': 2001:500:2f::f#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './DNSKEY/IN': 2001:500:12::d0d#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: network unreachable resolving './DNSKEY/IN': 2001:503:c27::2:30#53
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: managed-keys-zone: Key 20326 for zone . acceptance timer complete: k>
+Apr 29 09:47:52 bastion.vs.dr.com named[39111]: resolver priming query complete
+==========================
+
+> Check the DNS resolution:
+==========================
+nslookup 10.10.0.21
+21.0.10.10.in-addr.arpa name = api-int.vs.dr.com.
+21.0.10.10.in-addr.arpa name = bastion.vs.dr.com.
+21.0.10.10.in-addr.arpa name = api.vs.dr.com.
+
+ dig bastion.vs.dr.com
+
+; <<>> DiG 9.11.36-RedHat-9.11.36-5.el8 <<>> bastion.vs.dr.com
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 24901
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+; COOKIE: 67db8062586b9b25235a911c644d0c66bde8eadbca87241d (good)
+;; QUESTION SECTION:
+;bastion.vs.dr.com.             IN      A
+
+;; ANSWER SECTION:
+bastion.vs.dr.com.      604800  IN      A       10.10.0.21
+
+;; AUTHORITY SECTION:
+vs.dr.com.              604800  IN      NS      bastion.vs.dr.com.
+
+;; Query time: 1 msec
+;; SERVER: 192.168.31.93#53(192.168.31.93)
+;; WHEN: Sat Apr 29 17:54:06 IST 2023
+;; MSG SIZE  rcvd: 104
+
+==========================
+
+4. Load-Balancer configuration (Haproxy)
+
+> yum install haproxy* -y
+> vim /etc/haproxy/haproxy.cfg
+===========================
+global
+  log         127.0.0.1 local2
+  pidfile     /var/run/haproxy.pid
+  maxconn     4000
+  daemon
+defaults
+  mode                    tcp
+  log                     global
+  option                  dontlognull
+  option http-server-close
+  option                  redispatch
+  retries                 3
+  timeout http-request    10s
+  timeout queue           1m
+  timeout connect         10s
+  timeout client          1m
+  timeout server          1m
+  timeout http-keep-alive 10s
+  timeout check           10s
+  maxconn                 3000
+frontend stats
+  bind *:1936
+  mode            http
+  log             global
+  maxconn 10
+  stats enable
+  stats hide-version
+  stats refresh 30s
+  stats show-node
+  stats show-desc Stats for vs cluster
+  stats auth admin:darshan
+  stats uri /stats
+
+listen api-server-6443
+  bind *:6443
+  mode tcp
+  server bootstrap bootstrap.vs.dr.com:6443 check inter 1s backup
+  server master1 master1.vs.dr.com:6443 check inter 1s
+  server master2 master2.vs.dr.com:6443 check inter 1s
+  server master3 master3.vs.dr.com:6443 check inter 1s
+
+listen machine-config-server-22623
+  bind *:22623
+  mode tcp
+  server bootstrap bootstrap.vs.dr.com:22623 check inter 1s backup
+  server master1 master1.vs.dr.com:22623 check inter 1s
+  server master2 master2.vs.dr.com:22623 check inter 1s
+  server master3 master3.vs.dr.com:22623 check inter 1s
+
+listen ingress-router-443
+  bind *:443
+  mode tcp
+  balance source
+  server worker1 worker1.vs.dr.com:443 check inter 1s
+  server worker2 worker2.vs.dr.com:443 check inter 1s
+  server master1 master1.vs.dr.com:443 check inter 1s
+  server master2 master2.vs.dr.com:443 check inter 1s
+  server master3 master3.vs.dr.com:443 check inter 1s
+
+listen ingress-router-80
+  bind *:80
+  mode tcp
+  balance source
+  server worker1 worker1.vs.dr.com:80 check inter 1s
+  server worker2 worker2.vs.dr.com:80 check inter 1s
+  server master1 master1.vs.dr.com:80 check inter 1s
+  server master2 master2.vs.dr.com:80 check inter 1s
+  server master3 master3.vs.dr.com:80 check inter 1s
+===========================
+
+> setsebool -P haproxy_connect_any 1
+> systemctl start haproxy
+> systemctl enable haproxy
+> systemctl status haproxy
+● haproxy.service - HAProxy Load Balancer
+   Loaded: loaded (/usr/lib/systemd/system/haproxy.service; enabled; vendor preset: disabled)
+   Active: active (running) since Sat 2023-04-29 18:18:50 IST; 17s ago
+ Main PID: 90945 (haproxy)
+    Tasks: 2 (limit: 204117)
+   Memory: 3.2M
+   CGroup: /system.slice/haproxy.service
+           ├─90945 /usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d -p /run/haproxy.pid
+           └─90947 /usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d -p /run/haproxy.pid
+
+5. Download tools the required for installation OCP_Cluster and mirror registry:
+
+> Create 2 directory:
+mkdir ocp
+mkdir mirror
+
+> Download required file:
+wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz
+wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.11.9/openshift-client-linux-4.11.9.tar.gz
+wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.11.9/openshift-install-linux-4.11.9.tar.gz
+wget https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/mirror-registry/latest/mirror-registry.tar.gz
+
+> Untar all the file required:
+tar xvf oc-mirror.tar.gz -C /usr/local/bin/
+tar xvf openshift-client-linux-4.11.9.tar.gz -C /usr/local/bin/
+tar xvf openshift-install-linux-4.11.9.tar.gz -C /usr/local/bin/
+tar xvf mirror-registry.tar.gz
+
+> Check the version:
+
+oc version
+Client Version: 4.11.9
+
+openshift-install version
+openshift-install 4.11.9
+built from commit 01a6869a6f1208fb4d112060c5971432fdd619cf
+release image quay.io/openshift-release-dev/ocp-release@sha256:94b611f00f51c9acc44ca3f4634e46bd79d7d28b46047c7e3389d250698f0c99
+
+oc-mirror version
+Client Version: version.Info{Major:"", Minor:"", GitVersion:"4.12.0-202304070941.p0.g7635353.assembly.stream-7635353", GitCommit:"7635353ed12fdcb725855b1d4165cfec8dc10e16", GitTreeState:"clean", BuildDate:"2023-04-07T10:11:09Z", GoVersion:"go1.19.6", Compiler:"gc", Platform:"linux/amd64"}
+
+6. Creating ignition file, start the machine and cluster:
+
+> install-config.yaml
+==========================
+apiVersion: v1
+baseDomain: pd.com
+compute:
+- hyperthreading: Enabled
+  name: worker
+  replicas: 0
+controlPlane:
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
+metadata:
+  name: dr
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}
+fips: false
+pullSecret:{
+  "auths": {
+    "cloud.openshift.com": {
+      "auth": "b3BlbnNoaWZ0LXJlbGVhc2UtZGV2K29jbV9hY2Nlc3NfNWYzMDAyYWU3M2FjNGIzM2JlYzEzYzliMmZjMjBlMjI6N1BFTTNNUENGSU9VVDdWWEg0OUhOWVFERzkxMVNFWkZWVU9LNlJKVFVPRjk5MVlHNVpSMVc0NkdCS0lJMTFXNA==",
+      "email": "darshan.murthy@prodevans.com"
+    },
+    "quay.io": {
+      "auth": "b3BlbnNoaWZ0LXJlbGVhc2UtZGV2K29jbV9hY2Nlc3NfNWYzMDAyYWU3M2FjNGIzM2JlYzEzYzliMmZjMjBlMjI6N1BFTTNNUENGSU9VVDdWWEg0OUhOWVFERzkxMVNFWkZWVU9LNlJKVFVPRjk5MVlHNVpSMVc0NkdCS0lJMTFXNA==",
+      "email": "darshan.murthy@prodevans.com"
+    },
+    "registry.connect.redhat.com": {
+      "auth": "fHVoYy1wb29sLWU0MjllMmRhLTlmNzktNGY1MC1iOWM3LTQ1NGE0NWU4ZTE1OTpleUpoYkdjaU9pSlNVelV4TWlKOS5leUp6ZFdJaU9pSTVPRFUzT1RobU1UQmxObUUwTXpFd09XVTFZV013TVRGaU5XWmtNR05qTlNKOS5zaFFwcmh5NWlkVmg1YjIwRDV3NG96djZ3bU1lUnhYRkh3VHlVSnNDV0NULXZpSlB1UkVHc1JtOU9wTWNvUWthQnpyUXFUVlBVR1EwQlpkenFGN3lsVUE5dU9XOS1Eb2EwVVZRMUxPY0NtM2lOd3U0b1hiaWNLWkNMbzczZld3bUZ0WUNvdkt5UW82dUUyX2RTX1BUdEtVS2RxYllxUnJZTDRFVFduU251OEQ2Y2hQb0J4cGQydEJZTnFieFM4SE1lb1FNc0g2SlRoVEFXRWhiR3FaUHBLR3llaExWSExfeklZMXVQckhhSmxsZ2c3Q3pKMEE3cEVlVWdHZkxzdW5EeVM1RjJrdnd6MTFlaDUta25hckNjeTZ1QWxuRVNXcWtLZGxhUGZXa0U5eDVCTHlsUThnSTdHaDRxRi1IVUJieFNvcjF5NklaYXA1RW0wM0owVnpIQ1RxUnlGMFZtR19VX0NGNmhBNk5oaTQtdWl5dE9WRXVzY2Q4cEg0TnFKRlJxaVQ5YXNOSmoyVWhIaThlUFhqb21icm9YX2ZhMlM0bE0zLUdQQTlYUDFWS0N1dm85UTNxaUlMSno4ZEM4SDNrZVg4VjROcHhYVTJyVS1hTld5aklDSWZuWDJfcUNyOTkzMjdCMTJtdE5YNWp3Z29MOVF0UjNXaTNzSmJhMjJadndhMUx1MG90WFpoZDh0dXRQTGVmSHQ0a3BHSzJWRUFRMWR5TklHVUZjQ01yMHVNd2lCWnlrd0hjT0liaVBWVVFrenlGQjdrUWl3am10VlFidnFDZDA4Y0w3YllSMGt3eFptREoxck80VmRuVkluM0FSVEM3U2NpbnhkOXk0RFhZLXM3WjhzdWc4UUpRTmNoYThuSHc5UWhmY0IxRlJnZUtNYVhCaExfMGZhbw==",
+      "email": "darshan.murthy@prodevans.com"
+    },
+    "registry.redhat.io": {
+      "auth": "fHVoYy1wb29sLWU0MjllMmRhLTlmNzktNGY1MC1iOWM3LTQ1NGE0NWU4ZTE1OTpleUpoYkdjaU9pSlNVelV4TWlKOS5leUp6ZFdJaU9pSTVPRFUzT1RobU1UQmxObUUwTXpFd09XVTFZV013TVRGaU5XWmtNR05qTlNKOS5zaFFwcmh5NWlkVmg1YjIwRDV3NG96djZ3bU1lUnhYRkh3VHlVSnNDV0NULXZpSlB1UkVHc1JtOU9wTWNvUWthQnpyUXFUVlBVR1EwQlpkenFGN3lsVUE5dU9XOS1Eb2EwVVZRMUxPY0NtM2lOd3U0b1hiaWNLWkNMbzczZld3bUZ0WUNvdkt5UW82dUUyX2RTX1BUdEtVS2RxYllxUnJZTDRFVFduU251OEQ2Y2hQb0J4cGQydEJZTnFieFM4SE1lb1FNc0g2SlRoVEFXRWhiR3FaUHBLR3llaExWSExfeklZMXVQckhhSmxsZ2c3Q3pKMEE3cEVlVWdHZkxzdW5EeVM1RjJrdnd6MTFlaDUta25hckNjeTZ1QWxuRVNXcWtLZGxhUGZXa0U5eDVCTHlsUThnSTdHaDRxRi1IVUJieFNvcjF5NklaYXA1RW0wM0owVnpIQ1RxUnlGMFZtR19VX0NGNmhBNk5oaTQtdWl5dE9WRXVzY2Q4cEg0TnFKRlJxaVQ5YXNOSmoyVWhIaThlUFhqb21icm9YX2ZhMlM0bE0zLUdQQTlYUDFWS0N1dm85UTNxaUlMSno4ZEM4SDNrZVg4VjROcHhYVTJyVS1hTld5aklDSWZuWDJfcUNyOTkzMjdCMTJtdE5YNWp3Z29MOVF0UjNXaTNzSmJhMjJadndhMUx1MG90WFpoZDh0dXRQTGVmSHQ0a3BHSzJWRUFRMWR5TklHVUZjQ01yMHVNd2lCWnlrd0hjT0liaVBWVVFrenlGQjdrUWl3am10VlFidnFDZDA4Y0w3YllSMGt3eFptREoxck80VmRuVkluM0FSVEM3U2NpbnhkOXk0RFhZLXM3WjhzdWc4UUpRTmNoYThuSHc5UWhmY0IxRlJnZUtNYVhCaExfMGZhbw==",
+      "email": "darshan.murthy@prodevans.com"
+    },
+    "bastion.vs.dr.com:8443": {
+      "auth": "aW5pdDpkcnNoYWdAMTIz",
+      "email": "darshan.murthy@prodevans.com"
+    }
+  }
+}
+sshKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCxPAEEIWtJqkH1HwNJjkkEbSqWr6nMq1F9wu9ZKMBhk1U/p9GCaidYN/5h7P4vum/saPl0IKWCZGtlHIGJH+fPdGn4Q28EFoI/gCQZtLG4sMLlBmBl310D61WbIGwv/1gKKfqWH0LC2iabJ8rjeVAXQAAR2cZLIW4x+d4yU2S2M3tnQX5mDr+5gD591UKsnXOkY2D7ji4miIXI04u2j+UV0dYdEp1V9VA1aTXvLCobdivl8AjPUaCFvrPWX57QVfnYRVWelyY0EWHaLY9ckeh87uAbe9DqH6qFhEig+RyQLs1ixdtXhtvhtsX85zEAubMZRkuigWZAheCnIIroTIzcMNpSGEoCNbT6wLkrJDOFr1WvuovsYa3cwYATs98LaQCfKZc8Brr8tTngLLLT4HICvYlY1SK7DUPwGSjwHVR4GMpmpOi9QKFK0AeTN6AxmVki66WPXNfPnrhNuArcaQBHTS/sPRff1wT3hYnAC0u7OtgHI9aok5ykMTwfqAYvKTc= root@bastion.vs.dr.com'
+
+imageContentSources:
+- mirrors:
+  - bastion.vs.dr.com:8443/ocp4/openshift4
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - bastion.vs.dr.com:8443/ocp4/openshift4
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+
+additionalTrustBundle: |
+-----BEGIN CERTIFICATE-----
+MIIDujCCAqKgAwIBAgIUX9ceOfAU+4R6E6tSYNgmvo5PbgowDQYJKoZIhvcNAQEL
+BQAwazELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAlZBMREwDwYDVQQHDAhOZXcgWW9y
+azENMAsGA1UECgwEUXVheTERMA8GA1UECwwIRGl2aXNpb24xGjAYBgNVBAMMEWJh
+c3Rpb24ubXIuZHIuY29tMB4XDTIzMDQyOTE0MDMxMloXDTI2MDIxNjE0MDMxMlow
+azELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAlZBMREwDwYDVQQHDAhOZXcgWW9yazEN
+MAsGA1UECgwEUXVheTERMA8GA1UECwwIRGl2aXNpb24xGjAYBgNVBAMMEWJhc3Rp
+b24ubXIuZHIuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0U74
+tIHPcPOMm32ip9OrKBPftLV+WhimtrlpDS2bOLVLzDsLbKgmRU5JaO6l6qWPBbIy
+HOMOExmltanLAbqT8dT5oNKjikREc4DVyna75Yl3q2i6a9O7BM2BpvVz94Q5aL0Y
+glM92BnzYrnmRxumE1ro1jBo1JQ0xjjdOrJADMveHvKoD75xV851P1emUPFdZnth
+wvRBhEXTUuhCJAZHSvkMvq+c3U3p0lqMVvDxFvcAfyNalVjpwKj2I6TxcdkxrWJH
+vQmR5D7s8F08nWBamoigtbiK5G9EOO3Tg08jY+vYWEW5We2OeDQex+7P9DbtIZgB
+aXGjc0hVRb+Sfz/DuwIDAQABo1YwVDALBgNVHQ8EBAMCAuQwEwYDVR0lBAwwCgYI
+KwYBBQUHAwEwHAYDVR0RBBUwE4IRYmFzdGlvbi5tci5kci5jb20wEgYDVR0TAQH/
+BAgwBgEB/wIBATANBgkqhkiG9w0BAQsFAAOCAQEAEYupTNSJN9Fd/wZvUntvv369
+tsDOTcorv6Ofy9cR14PDa+5Pk9rM+d4fo909s2ur111oYGQAoIhO/qNBAhTfQB0r
+ATZPg6u6JuQTs2wnQmENZVsJqI1Kb7lf+92U6htaS01BIJKdeIFqBo1pOyZkboL9
+TiZ703fn7C9bNlPRW/7eiqOPY4Rnvb6Hks51GdheBsw3bnhQIYjVrCuYs+7sodEF
+jf332G8TFWfpLZy77KVSk0ceHMPtc6KRD8r4rZRQOAPLaOINsgi37S4kEIGoaGKh
+e/qUDQZSdaLge4vIkhjqPzVZsBelhyCkYbxXmEiGJT6C1JUiM2iMm/8Y7xKG6w==
+-----END CERTIFICATE-----
+=======================================
+
+> openshift-install create manifests
+INFO Consuming Install Config from target directory
+WARNING Making control-plane schedulable by setting MastersSchedulable to true for Scheduler cluster settings
+INFO Manifests created in: manifests and openshift
+
+> cat cluster-scheduler-02-config.yml
+apiVersion: config.openshift.io/v1
+kind: Scheduler
+metadata:
+  creationTimestamp: null
+  name: cluster
+spec:
+  mastersSchedulable: flase
+  policy:
+    name: ""
+status: {}
+
+> openshift-install create ignition-configs
+INFO Consuming Openshift Manifests from target directory
+INFO Consuming Master Machines from target directory
+INFO Consuming Common Manifests from target directory
+INFO Consuming OpenShift Install (Manifests) from target directory
+INFO Consuming Worker Machines from target directory
+INFO Ignition-Configs created in: . and auth
+
+>  ls | tree
+.
+├── auth
+│   ├── kubeadmin-password
+│   └── kubeconfig
+├── bootstrap.ign
+├── master.ign
+├── metadata.json
+└── worker.ign
+
+1 directory, 6 files
+
+> install httpd service:
+yum install httpd -y
+
+> edit the listen port from 80 to 8080:
+vim /etc/httpd/conf/httpd.conf
+
+> copy all the ignition(.ign) files to html folder
+cp *.ign /var/www/html/
+
+> set the permission to .ign files 0644:
+chmod 644 /var/www/html/*.ign
+
+> To get details of RHCOS:
+openshift-install coreos print-stream-json | grep '\.iso[^.]'
+    "location": "https://rhcos.mirror.openshift.com/art/storage/releases/rhcos-4.11-aarch64/411.86.202210032347-0/aarch64/rhcos-411.86.202210032347-0-live.aarch64.iso",
+    "location": "https://rhcos.mirror.openshift.com/art/storage/releases/rhcos-4.11-ppc64le/411.86.202210032141-0/ppc64le/rhcos-411.86.202210032141-0-live.ppc64le.iso",
+    "location": "https://rhcos.mirror.openshift.com/art/storage/releases/rhcos-4.11-s390x/411.86.202210032129-0/s390x/rhcos-411.86.202210032129-0-live.s390x.iso",
+    "location": "https://rhcos.mirror.openshift.com/art/storage/releases/rhcos-4.11/411.86.202210041459-0/x86_64/rhcos-411.86.202210041459-0-live.x86_64.iso",
+	
+> Start HTTPD service:
+systemctl start httpd
+systemctl enable httpd
+systemctl status httpd
+● httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
+   Active: active (running) since Sun 2023-04-30 02:43:20 IST; 9s ago
+     Docs: man:httpd.service(8)
+ Main PID: 31913 (httpd)
+   Status: "Running, listening on: port 8080"
+    Tasks: 214 (limit: 204117)
+   Memory: 40.4M
+   CGroup: /system.slice/httpd.service
+           ├─31913 /usr/sbin/httpd -DFOREGROUND
+           ├─31916 /usr/sbin/httpd -DFOREGROUND
+           ├─31917 /usr/sbin/httpd -DFOREGROUND
+           ├─31918 /usr/sbin/httpd -DFOREGROUND
+           ├─31919 /usr/sbin/httpd -DFOREGROUND
+           └─31920 /usr/sbin/httpd -DFOREGROUND
+
+Apr 30 02:43:20 bastion.vs.dr.com systemd[1]: Starting The Apache HTTP Server...
+Apr 30 02:43:20 bastion.vs.dr.com systemd[1]: Started The Apache HTTP Server.
+Apr 30 02:43:20 bastion.vs.dr.com httpd[31913]: Server configured, listening on: port 8080
+
+> verify that by using curl:
+=======================
+curl -Ikvl http://10.10.0.21:8080/bootstrap.ign
+*   Trying 10.10.0.21...
+* TCP_NODELAY set
+* Connected to 10.10.0.21 (10.10.0.21) port 8080 (#0)
+> HEAD /bootstrap.ign HTTP/1.1
+> Host: 10.10.0.21:8080
+> User-Agent: curl/7.61.1
+> Accept: */*
+>
+< HTTP/1.1 200 OK
+HTTP/1.1 200 OK
+< Date: Sat, 29 Apr 2023 21:24:17 GMT
+Date: Sat, 29 Apr 2023 21:24:17 GMT
+< Server: Apache/2.4.37 (Red Hat Enterprise Linux) OpenSSL/1.1.1k mod_fcgid/2.3.9
+Server: Apache/2.4.37 (Red Hat Enterprise Linux) OpenSSL/1.1.1k mod_fcgid/2.3.9
+< Last-Modified: Sat, 29 Apr 2023 20:45:09 GMT
+Last-Modified: Sat, 29 Apr 2023 20:45:09 GMT
+< ETag: "45fb8-5fa7faa616164"
+ETag: "45fb8-5fa7faa616164"
+< Accept-Ranges: bytes
+Accept-Ranges: bytes
+< Content-Length: 286648
+Content-Length: 286648
+< Content-Type: application/vnd.coreos.ignition+json
+Content-Type: application/vnd.coreos.ignition+json
+
+<
+* Connection #0 to host 10.10.0.21 left intact
+==========================
+
+> Run the below command in Bootstrap, Master, and Worker:
+
+coreos-installer install /dev/sda --ignition-url=http://<bastion_IP>:8080/bootstrap.ign --insecure-ignition --copy-network
+
+> To verfiy the Node status
+ oc get nodes
+NAME                     STATUS   ROLES    AGE   VERSION
+master1.pr.darshan.com   Ready    master   23m   v1.24.0+dc5a2fd
+master2.pr.darshan.com   Ready    master   10m   v1.24.0+dc5a2fd
+master3.pr.darshan.com   Ready    master   2m    v1.24.0+dc5a2fd
+
+> If there is any node is in NotReady State. Check the certificate
+oc get csr
+NAME                                             AGE     SIGNERNAME                                    REQUESTOR                                                                         REQUESTEDDURATION   CONDITION
+csr-b4fsh                                        7m19s   kubernetes.io/kubelet-serving                 system:node:master3.pr.darshan.com                                                <none>              Approved,Issued
+csr-f22zf                                        28m     kubernetes.io/kubelet-serving                 system:node:master1.pr.darshan.com                                                <none>              Approved,Issued
+csr-vt6pn                                        15m     kubernetes.io/kubelet-serving                 system:node:master2.pr.darshan.com                                                <none>              Approved,Issued
+csr-wfkzp                                        7m41s   kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-wmxzs                                        28m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+csr-xs624                                        16m     kubernetes.io/kube-apiserver-client-kubelet   system:serviceaccount:openshift-machine-config-operator:node-bootstrapper         <none>              Approved,Issued
+system:openshift:openshift-authenticator-7qzlp   26m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-authentication-operator:authentication-operator   <none>              Approved,Issued
+system:openshift:openshift-monitoring-xp27q      23m     kubernetes.io/kube-apiserver-client           system:serviceaccount:openshift-monitoring:cluster-monitoring-operator            <none>              Approved,Issued
+
+> To approve the pending certificate:
+oc adm certificate approve <Certificate_name>
+
+Note: to approve mutliple certificate in one time use below command 
+oc get csr -o name | xargs oc adm certificate approve
+
+> To export Kubeconfig:
+export KUBECONFIG=/root/installation/auth/kubeconfig
+
+> Check the Cluster Operator status:
+
+oc get co
+NAME                                       VERSION   AVAILABLE   PROGRESSING   DEGRADED   SINCE   MESSAGE
+authentication                             4.11.9    True        False         False      6m56s
+baremetal                                  4.11.9    True        False         False      5h21m
+cloud-controller-manager                   4.11.9    True        False         False      5h29m
+cloud-credential                           4.11.9    True        False         False      5h47m
+cluster-autoscaler                         4.11.9    True        False         False      5h23m
+config-operator                            4.11.9    True        False         False      5h25m
+console                                    4.11.9    True        False         False      39m
+csi-snapshot-controller                    4.11.9    True        False         False      3h57m
+dns                                        4.11.9    True        False         False      172m
+etcd                                       4.11.9    True        False         False      5h14m
+image-registry                             4.11.9    True        False         False      5h8m
+ingress                                    4.11.9    True        False         False      3h39m
+insights                                   4.11.9    False       False         True       138m    
+kube-apiserver                             4.11.9    True        False         False      5h11m
+kube-controller-manager                    4.11.9    True        False         False      5h14m
+kube-scheduler                             4.11.9    True        False         False      5h14m
+kube-storage-version-migrator              4.11.9    True        False         False      3h58m
+machine-api                                4.11.9    True        False         False      5h22m
+machine-approver                           4.11.9    True        False         False      5h21m
+machine-config                             4.11.9    True        False         False      16m
+marketplace                                4.11.9    True        False         False      5h23m
+monitoring                                 4.11.9    True        False         False      4h57m
+network                                    4.11.9    True        False         False      5h25m
+node-tuning                                4.11.9    True        False         False      5h22m
+openshift-apiserver                        4.11.9    True        False         False      7m6s
+openshift-controller-manager               4.11.9    True        False         False      5h14m
+openshift-samples                          4.11.9    True        False         False      3h58m
+operator-lifecycle-manager                 4.11.9    True        False         False      5h22m
+operator-lifecycle-manager-catalog         4.11.9    True        False         False      5h22m
+operator-lifecycle-manager-packageserver   4.11.9    True        False         False      5h10m
+service-ca                                 4.11.9    True        False         False      5h25m
+storage                                    4.11.9    True        False         False      5h25m
+
+> To check the current cluster version:
+oc get clusterversion
+NAME      VERSION   AVAILABLE   PROGRESSING   SINCE   STATUS
+version   4.11.9    True        False         4h51m   Error while reconciling 4.11.9: the cluster operator insights has not yet successfully rolled out
+
+> Once the cluster is up remove the bootstarp machine from the cluster safely using below command:
+openshift-install wait-for bootstrap-complete --log-level=info 
+
+7. Installing quay registry and downloading all the registry for OCP_Cluster and Operator registry
+
+> ./mirror-registry install --quayHostname bastion.pr.darshan.com --initPassword drshag@123
+
+> Update the existing ca-certificate with quay certificate and update:
+cp /root/quay-install/quay-rootCA/rootCA.pem /etc/pki/ca-trust/source/anchors/
+update-ca-trust
+podman login --authfile pod bastion.vs.dr.com:8443
+
+> cat /etc/environment
+OCP_RELEASE=4.11.9
+LOCAL_REGISTRY=bastion.dr.pd.com:8443
+LOCAL_REPOSITORY=ocp4/openshift4
+LOCAL_SECRET_JSON=/root/pull-secret.json
+PRODUCT_REPO=openshift-release-dev
+RELEASE_NAME=ocp-release
+ARCHITECTURE=x86_64
+GODEBUG=x509ignoreCN=0
+
+> Cluster registry:
+
+oc adm release mirror -a ${LOCAL_SECRET_JSON} --from=quay.io/${PRODUCT_REPO}/${RELEASE_NAME}:${OCP_RELEASE}-${ARCHITECTURE} --to=${LOCAL_REGISTRY}/${LOCAL_REPOSITORY} --to-release-image=${LOCAL_REGISTRY}/${LOCAL_REPOSITORY}:${OCP_RELEASE}-${ARCHITECTURE}
+ 
+> Operators:
+
+add in environment:
+DOCKER_CONFIG=/root/secret
+
+oc-mirror list operators --catalogs --version=4.11
+Available OpenShift OperatorHub catalogs:
+OpenShift 4.11:
+registry.redhat.io/redhat/redhat-operator-index:v4.11
+registry.redhat.io/redhat/certified-operator-index:v4.11
+registry.redhat.io/redhat/community-operator-index:v4.11
+registry.redhat.io/redhat/redhat-marketplace-index:v4.11
+
+oc-mirror list operators --catalog=registry.redhat.io/redhat/redhat-operator-index:v4.11
+NAME                                          DISPLAY NAME                                             DEFAULT CHANNEL
+3scale-operator                               Red Hat Integration - 3scale                             threescale-2.13
+advanced-cluster-management                   Advanced Cluster Management for Kubernetes               release-2.7
+amq-broker-rhel8                              Red Hat Integration - AMQ Broker for RHEL 8 (Multiarch)  7.11.x
+amq-online                                    Red Hat Integration - AMQ Online                         stable
+amq-streams                                   AMQ Streams                                              stable
+amq7-interconnect-operator                    Red Hat Integration - AMQ Interconnect                   1.10.x
+ansible-automation-platform-operator          Ansible Automation Platform                              stable-2.3-cluster-scoped
+ansible-cloud-addons-operator                 Ansible Cloud Addons                                     stable-2.3-cluster-scoped
+apicast-operator                              Red Hat Integration - 3scale APIcast gateway             threescale-2.13
+aws-efs-csi-driver-operator                   AWS EFS CSI Driver Operator                              stable
+aws-load-balancer-operator                    AWS Load Balancer Operator                               stable-v1
+bamoe-businessautomation-operator             IBM Business Automation                                  8.x-stable
+bamoe-kogito-operator                         IBM BAMOE Kogito Operator                                8.x
+bare-metal-event-relay                        Bare Metal Event Relay                                   stable
+businessautomation-operator                   Business Automation                                      stable
+cincinnati-operator                           OpenShift Update Service                                 v1
+cluster-kube-descheduler-operator             Kube Descheduler Operator                                stable
+cluster-logging                               Red Hat OpenShift Logging                                stable
+clusterresourceoverride                       ClusterResourceOverride Operator                         stable
+compliance-operator                           Compliance Operator                                      stable
+container-security-operator                   Red Hat Quay Container Security Operator                 stable-3.8
+costmanagement-metrics-operator               Cost Management Metrics Operator                         stable
+cryostat-operator                             Red Hat build of Cryostat                                stable
+datagrid                                      Data Grid                                                8.4.x
+devspaces                                     Red Hat OpenShift Dev Spaces                             stable
+devworkspace-operator                         DevWorkspace Operator                                    fast
+dpu-network-operator                          DPU Network Operator                                     stable
+eap                                           JBoss EAP                                                stable
+elasticsearch-operator                        OpenShift Elasticsearch Operator                         stable
+external-dns-operator                         ExternalDNS Operator                                     stable-v1
+file-integrity-operator                       File Integrity Operator                                  stable
+fuse-apicurito                                Red Hat Integration - API Designer                       fuse-apicurito-7.11.x
+fuse-console                                  Red Hat Integration - Fuse Console                       7.11.x
+fuse-online                                   Red Hat Integration - Fuse Online                        latest
+gatekeeper-operator-product                   Gatekeeper Operator                                      stable
+jaeger-product                                Red Hat OpenShift distributed tracing platform           stable
+jws-operator                                  JWS Operator                                             alpha
+kiali-ossm                                    Kiali Operator                                           stable
+klusterlet-product                            Klusterlet                                               stable-2.2
+kubernetes-nmstate-operator                   Kubernetes NMState Operator                              stable
+kubevirt-hyperconverged                       OpenShift Virtualization                                 stable
+local-storage-operator                        Local Storage                                            stable
+loki-operator                                 Loki Operator                                            stable
+mcg-operator                                  NooBaa Operator                                          stable-4.11
+metallb-operator                              MetalLB Operator                                         stable
+mta-operator                                  Migration Toolkit for Applications Operator              stable-v6.1
+mtc-operator                                  Migration Toolkit for Containers Operator                release-v1.7
+mtr-operator                                  Migration Toolkit for Runtimes Operator                  alpha
+mtv-operator                                  Migration Toolkit for Virtualization Operator            release-v2.4
+multicluster-engine                           multicluster engine for Kubernetes                       stable-2.2
+netobserv-operator                            Network observability                                    stable
+nfd                                           Node Feature Discovery Operator                          stable
+node-healthcheck-operator                     Node Health Check Operator                               stable
+node-maintenance-operator                     Node Maintenance Operator                                stable
+node-observability-operator                   Node Observability Operator                              alpha
+numaresources-operator                        numaresources-operator                                   4.11
+ocs-operator                                  OpenShift Container Storage                              stable-4.11
+odf-csi-addons-operator                       CSI Addons                                               stable-4.11
+odf-lvm-operator                              ODF LVM Operator                                         stable-4.11
+odf-multicluster-orchestrator                 ODF Multicluster Orchestrator                            stable-4.11
+odf-operator                                  OpenShift Data Foundation                                stable-4.11
+odr-cluster-operator                          Openshift DR Cluster Operator                            stable-4.11
+odr-hub-operator                              Openshift DR Hub Operator                                stable-4.11
+openshift-cert-manager-operator               cert-manager Operator for Red Hat OpenShift              tech-preview
+openshift-custom-metrics-autoscaler-operator  Custom Metrics Autoscaler                                stable
+openshift-gitops-operator                     Red Hat OpenShift GitOps                                 latest
+openshift-pipelines-operator-rh               Red Hat OpenShift Pipelines                              latest
+openshift-secondary-scheduler-operator        Secondary Scheduler Operator for Red Hat OpenShift       stable
+openshift-special-resource-operator           Special Resource Operator                                stable
+opentelemetry-product                         Red Hat OpenShift distributed tracing data collection    stable
+ptp-operator                                  PTP Operator                                             stable
+quay-bridge-operator                          Red Hat Quay Bridge Operator                             stable-3.8
+quay-operator                                 Red Hat Quay                                             stable-3.8
+red-hat-camel-k                               Red Hat Integration - Camel K                            1.10.x
+redhat-oadp-operator                          OADP Operator                                            stable-1.1
+rh-service-binding-operator                   Service Binding Operator                                 stable
+rhacs-operator                                Advanced Cluster Security for Kubernetes                 latest
+rhods-operator                                Red Hat OpenShift Data Science                           stable
+rhods-prometheus-operator                     Prometheus Operator                                      beta
+rhpam-kogito-operator                         RHPAM Kogito Operator                                    7.x
+rhsso-operator                                Red Hat Single Sign-On Operator                          stable
+sandboxed-containers-operator                 OpenShift sandboxed containers Operator                  stable-1.3
+self-node-remediation                         Self Node Remediation Operator                           stable
+serverless-operator                           Red Hat OpenShift Serverless                             stable
+service-registry-operator                     Red Hat Integration - Service Registry Operator          2.x
+service-telemetry-operator                    Service Telemetry Operator                               stable-1.5
+servicemeshoperator                           Red Hat OpenShift Service Mesh                           stable
+skupper-operator                              Skupper                                                  alpha
+smart-gateway-operator                        Smart Gateway Operator                                   stable-1.5
+sriov-network-operator                        SR-IOV Network Operator                                  stable
+submariner                                    Submariner                                               stable-0.14
+topology-aware-lifecycle-manager              Topology Aware Lifecycle Manager                         stable
+vertical-pod-autoscaler                       VerticalPodAutoscaler                                    stable
+volsync-product                               VolSync                                                  stable
+web-terminal                                  Web Terminal                                             fast
+windows-machine-config-operator               Windows Machine Config Operator                          stable
+
+oc-mirror list operators --catalog=registry.redhat.io/redhat/certified-operator-index:v4.11
+NAME                                              DISPLAY NAME                                                DEFAULT CHANNEL
+acc-operator                                      netapp-acc-operator                                         stable
+aci-containers-operator                           Cisco ACI Containers Operator                               stable
+aikit-operator                                    Intel® oneAPI AI Analytics Toolkit Operator                 alpha
+ako-operator                                      AKO Operator                                                stable
+alloy                                             Alloy                                                       alpha
+anchore-engine                                    Anchore Engine Operator                                     alpha
+anzo-operator                                     Anzo Operator                                               stable
+anzograph-operator                                AnzoGraph Operator                                          stable
+anzounstructured-operator                         Anzo Unstructured Operator                                  stable
+apimatic-codegen-operator                         APIMatic CodeGen Operator                                   beta
+app-director-operator                             App Director                                                1.0.2
+appdynamics-operator                              AppDynamics Operator for Kubernetes                         alpha
+aqua-operator-certified                           Aqua Security Operator                                      2022.4
+bookkeeper-operator                               BookKeeper Operator                                         stable
+cass-operator                                     DataStax Kubernetes Operator for Apache Cassandra           stable
+ccm-node-agent-dcap-operator                      CCM Node Agent DCAP Operator                                alpha
+ccm-node-agent-operator                           CCM Node Agent Operator                                     alpha
+cilium                                            Cilium                                                      1.13
+cilium-enterprise                                 Cilium Enterprise                                           1.12
+cisco-hxcsi-operator                              Cisco Hyperflex CSI Operator                                stable
+citrix-adc-istio-ingress-gateway-operator         Citrix ADC Istio Ingress Gateway Operator                   alpha
+citrix-cpx-istio-sidecar-injector-operator        Citrix ADC CPX Istio Sidecar Injector Operator              alpha
+citrix-cpx-with-ingress-controller-operator       Citrix ADC CPX with Ingress Controller                      stable
+citrix-ingress-controller-operator                Citrix Ingress Controller                                   stable
+citrix-multi-cluster-ingress-controller-operator  citrix-multi-cluster-ingress-controller                     stable
+cloud-native-postgresql                           EDB Postgres for Kubernetes                                 stable-v1.19
+cloudbees-ci                                      CloudBees CI                                                alpha
+cloudcasa-operator                                CloudCasa                                                   alpha
+cnfv-operator                                     CloudNFV                                                    alpha
+cnvrg                                             Cnvrg Operator                                              stable
+confluent-for-kubernetes                          Confluent for Kubernetes                                    2.5
+conjur-follower-operator                          Conjur Enterprise Follower Operator                         stable
+contrail-k8s-deployer                             contrail-k8s-deployer                                       23.1.0
+couchbase-enterprise-certified                    Couchbase Operator                                          stable
+crunchy-postgres-operator                         Crunchy Postgres for Kubernetes                             v5
+datadog-operator-certified                        Datadog Operator                                            alpha
+dell-csi-operator-certified                       Dell CSI Operator                                           stable
+dell-csm-operator-certified                       Dell Container Storage Modules                              stable
+dynatrace-operator                                Dynatrace Operator                                          alpha
+eginnovations-operator                            eG Innovations Universal Agent Operator                     beta
+elasticsearch-eck-operator-certified              Elasticsearch (ECK) Operator                                stable
+entando-k8s-operator                              Entando Operator                                            stable
+enterprise-kyverno                                EnterpriseKyverno                                           alpha
+f5-bigip-ctlr-operator                            F5 Container Ingress Services                               beta
+f5-ipam-controller-operator                       F5 Ipam controller                                          alpha
+federatorai-certified                             Federator.ai                                                stable
+fujitsu-enterprise-operator                       FUJITSU Enterprise Postgres 13 Operator                     stable-13
+fujitsu-enterprise-postgres-operator              Fujitsu Enterprise Postgres Operator                        stable
+function-mesh                                     Function Mesh Operator                                      alpha
+fusion-analytics-operator                         FusionAnalytics Operator                                    alpha
+gitlab-operator-kubernetes                        GitLab                                                      stable
+gitlab-runner-operator                            GitLab Runner                                               stable
+gpu-operator-certified                            NVIDIA GPU Operator                                         v23.3
+grafana-cloud-log-forwarder-operator              Grafana Cloud Log Forwarder                                 alpha
+hazelcast-enterprise-certified                    Hazelcast Enterprise Operator                               alpha
+hazelcast-platform-operator                       Hazelcast Platform Operator                                 alpha
+hpe-ezmeral-csi-operator                          HPE Ezmeral Data Fabric CSI Operator for Kubernetes         stable
+hspc-operator                                     Hitachi Storage Plug-in for Containers                      stable
+ibm-application-gateway-operator                  IBM Application Gateway Operator                            stable
+ibm-block-csi-operator                            IBM block storage CSI driver operator                       stable
+ibm-security-verify-directory-operator            IBM Security Verify Directory                               stable
+ibm-security-verify-operator                      IBM Security Verify Operator                                stable
+ibm-storage-odf-operator                          IBM Storage ODF operator                                    stable-v1.2
+infinibox-operator-certified                      InfiniBox CSI Driver - Operator                             stable
+infoscale-dr-manager                              InfoScale™ DR Manager                                       stable
+infoscale-licensing-operator                      InfoScale™ Licensing Operator                               stable
+infoscale-operator                                InfoScale™ SDS Operator                                     stable
+infoscale-sds-operator                            InfoScale™ SDS Operator                                     stable
+infrastructure-asset-orchestrator-certified       Infrastructure Asset Orchestrator                           stable
+installkit-customer                               Run:AI                                                      stable
+instana-agent-operator                            Instana Agent Operator                                      stable
+intel-device-plugins-operator                     Intel Device Plugins Operator                               alpha
+intel-ethernet-operator                           Intel Ethernet Operator                                     alpha
+iomesh-operator                                   IOMesh Operator                                             stable
+joget-dx-operator                                 Joget DX Operator                                           alpha
+k10-kasten-operator                               [DEPRECATED] K10 Helm Operator                              stable
+k8s-triliovault                                   TrilioVault for Kubernetes                                  stable
+k8s-triliovault-ibm                               TrilioVault for Kubernetes                                  stable
+kong-gateway-operator                             Kong Gateway Operator                                       alpha
+kove-operator                                     Kove External Memory Operator                               stable
+kube-loxilb-operator                              kube-loxilb-operator                                        alpha
+kubemq-operator-marketplace                       Kubemq Enterprise Operator                                  alpha
+kubeturbo-certified                               Kubeturbo Operator                                          stable
+lenovo-locd-operator                              lenovo-locd-operator                                        alpha
+lightbits-operator                                Lightbits Operator                                          alpha
+marketplace-games-operator                        Arcade Operator                                             alpha
+memcached-operator-ogaye                          memcached-operator-ogaye                                    alpha
+memory-machine-operator                           Memory Machine Operator                                     alpha
+minio-operator                                    Minio Operator                                              stable
+model-builder-for-vision-certified                IBM Model Builder for Vision                                stable
+mongodb-atlas-kubernetes                          MongoDB Atlas Operator                                      stable
+mongodb-enterprise                                MongoDB Enterprise Operator                                 stable
+neuvector-certified-operator                      NeuVector Operator                                          beta
+nginx-ingress-operator                            Nginx Ingress Operator                                      alpha
+nspc-operator                                     NEC Storage Plug-in for Containers                          stable
+nutanixcsioperator                                Nutanix CSI Operator                                        stable
+nvidia-network-operator                           NVIDIA Network Operator                                     v23.1.0
+nxiq-operator-certified                           Nexus IQ Operator                                           stable
+nxrm-operator-certified                           Nexus Repository Operator                                   stable
+open-liberty-certified                            Open Liberty                                                beta2
+openshiftartifactoryha-operator                   JFrog Artifactory Enterprise Operator                       alpha
+openshiftxray-operator                            JFrog Xray Continuous Security Operator                     alpha
+operator-certification-operator                   Operator Certification Operator                             alpha
+ovms-operator                                     OpenVINO Toolkit Operator                                   alpha
+pachyderm-operator                                Pachyderm                                                   stable
+pcc-operator                                      Prisma Cloud Compute Operator                               stable
+percona-postgresql-operator-certified             Percona Operator for PostgreSQL                             stable
+percona-server-mongodb-operator-certified         Percona Distribution for MongoDB Operator                   stable
+percona-xtradb-cluster-operator-certified         Percona Operator for MySQL based on Percona XtraDB Cluster  stable
+pmem-csi-operator-os                              Operator for PMEM-CSI driver                                stable
+portworx-certified                                Portworx Enterprise                                         stable
+prometurbo-certified                              Prometurbo Operator                                         stable
+pulsar-operator                                   Pulsar Operator                                             stable
+redis-enterprise-operator-cert                    Redis Enterprise Operator                                   production
+rubicon-rhc-operator                              Rubicon Operator                                            alpha
+runtime-component-operator-certified              Runtime Component                                           beta2
+runtime-fabric-operator                           Runtime Fabric Operator                                     alpha
+sanstoragecsi-operator-bundle                     NEC Storage M Series CSI Operator                           stable
+seldon-operator-certified                         Seldon Operator                                             stable
+silicom-sts-operator                              Silicom STS Operator                                        stable
+smilecdr-operator                                 Smilecdr Operator                                           alpha
+sosivio                                           Sosivio | Predictive Troubleshooting for Kubernetes         stable
+splunk-operator                                   Splunk Operator                                             stable
+sriov-fec                                         SR-IOV Operator for Wireless FEC Accelerators               stable
+stackable-commons-operator                        Stackable Commons Operator                                  stable
+stackable-secret-operator                         Stackable Secret Operator                                   stable
+stackable-zookeeper-operator                      Apache Zookeeper Operator                                   stable
+stealserver-operator                              STEAL Server                                                alpha
+sysdig-certified                                  Sysdig Agent Operator                                       stable
+t8c-certified                                     Turbonomic Platform Operator                                stable
+t8c-tsc-client-certified                          Turbonomic Secure Connect Client                            stable
+tenant-operator                                   Multi Tenant Operator                                       stable
+tigera-operator                                   Tigera Operator                                             release-v1.25
+timemachine-operator                              Time Machine Operator                                       alpha
+uma-admin-operator                                DX APM Universal Monitoring Agent Admin For Multi-tenancy   stable
+uma-operator                                      DX APM Universal Monitoring Agent                           stable
+uma-team-operator                                 DX APM Universal Monitoring Agent Team For Multi-tenancy    stable
+vfunction-server-operator                         vFunction Operator                                          stable
+xcrypt-operator                                   Zettaset XCrypt Operator                                    alpha
+xspc-operator                                     HPE XP Storage Plug-in for Containers                       stable
+zabbix-operator-certified                         Zabbix Operator                                             lts
+zookeeper-operator                                ZooKeeper Operator                                          stable
+
+vim imageset-config.yaml
+===============
+---
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v1alpha2
+archiveSize: 4
+storageConfig:
+  local:
+    path: /root/mirror/regmetadata
+mirror:
+  platform:
+    channels:
+      - name: stable-4.11
+        minVersion: 4.11.9
+        maxVersion: 4.11.9
+        type: ocp
+    graph: true
+  operators:
+    - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.11
+      packages:
+        - name: serverless-operator
+          channels:
+            - name: stable
+        - name: kubernetes-nmstate-operator
+          channels:
+            - name: stable
+        - name: kubevirt-hyperconverged
+          channels:
+            - name: stable
+        - name: local-storage-operator
+          channels:
+            - name: stable
+        - name: mcg-operator
+          channels:
+            - name: stable-4.11
+        - name: mtv-operator
+          channels:
+            - name: release-v2.4
+        - name: ocs-operator
+          channels:
+            - name: stable-4.11
+        - name: odf-csi-addons-operator
+          channels:
+            - name: stable-4.11
+        - name: odf-operator
+          channels:
+            - name: stable-4.11
+        - name: rhsso-operator
+          channels:
+            - name: stable
+        - name: devspaces
+          channels:
+            - name: stable
+        - name: devworkspace-operator
+          channels:
+            - name: fast
+        - name: eap
+          channels:
+            - name: stable
+        - name: node-healthcheck-operator
+          channels:
+            - name: stable
+        - name: self-node-remediation
+          channels:
+            - name: stable
+        - name: nfd
+          channels:
+            - name: stable
+        - name: 3scale-operator
+          channels:
+            - name: threescale-2.13
+        - name: advanced-cluster-management
+          channels:
+            - name: release-2.7
+        - name: cluster-logging
+          channels:
+            - name: stable
+        - name: compliance-operator
+          channels:
+            - name: stable
+        - name: elasticsearch-operator
+          channels:
+            - name: stable
+        - name: mtc-operator
+          channels:
+            - name: release-v1.7
+        - name: odf-lvm-operator
+          channels:
+            - name: stable-4.11
+        - name: quay-operator
+          channels:
+            - name: stable-3.8
+        - name: windows-machine-config-operator
+          channels:
+            - name: stable
+        - name: amq-streams
+          channels:
+            - name: stable
+        - name: redhat-oadp-operator
+          channels:
+            - name: stable-1.1
+  additionalimages:
+    - name: quay.io/redhattraining/loadtest:v1.0
+    - name: quay.io/service-binding/spring-petclinic:latest
+  helm: {}
+=======================
+
+Download the registry operator to local directory:
+oc-mirror --config=./imageset-config.yaml file://root/dis-mirror/
+
+Upload the downloaded to the Quay:
+oc-mirror --from=/root/dis-mirror/ docker://bastion.vs.dr.com:8443
